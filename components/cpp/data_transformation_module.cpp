@@ -22,17 +22,19 @@ using namespace std;
  * 
  * Variables
  * ---------
- * saddr    string                           IP address of flow client
- * stime    long double                      Starting time network flow
- * ltime    long double                      Ending time of network flow
- * tbytes   long long                        Total number of bytes sent during flow
+ * saddr                        string                           IP address of flow client
+ * stime                        long double                      Starting time network flow
+ * ltime                        long double                      Ending time of network flow
+ * tpackets                     long long                        Total number of bytes sent during flow
 *******************************************************************************/
 struct flow
 {
     string saddr;
+    string proto;
     long double stime;
     long double ltime;
-    long long tbytes;
+    long long stpackets;
+    long long dtpackets;
 };
 
 flow *process_csv_line(string line);
@@ -47,7 +49,7 @@ void writeFrame(vector<string> &subFrame);
 int main()
 {
     /* TODO: modify this variable to change the time interval in seconds */
-    const int interval = 60;
+    const int interval = 20;
 
     // DEBUG remove later
     time_t start_read, end_read, start_iter, end_iter;
@@ -139,8 +141,8 @@ void read_csv(string fname, vector<flow *> &frame)
 flow *process_csv_line(string line)
 {
     long double stime, ltime;
-    string _, sstime, sltime, saddr, stbytes, proto, category, subcategory, sattack;
-    long long tbytes;
+    string _, sstime, sltime, saddr, sstpackets, proto, category, subcategory, sattack, sdtpackets;
+    long long stpackets, dtpackets;
     stringstream ss(line);
     bool attack;
     flow *newFlow = new flow;
@@ -149,8 +151,8 @@ flow *process_csv_line(string line)
     getline(ss, sstime, ',');      // stime
     getline(ss, _, ',');           // flgs
     getline(ss, _, ',');           // flgs_number
-    getline(ss, proto, ',');       // proto
-    getline(ss, _, ',');           // proto_number
+    getline(ss, _, ',');           // proto
+    getline(ss, proto, ',');       // proto_number
     getline(ss, saddr, ',');       // saddr
     getline(ss, _, ',');           // sport
     getline(ss, _, ',');           // daddr
@@ -174,10 +176,10 @@ flow *process_csv_line(string line)
     getline(ss, _, ',');           // rate
     getline(ss, _, ',');           // srate
     getline(ss, _, ',');           // drate
-    getline(ss, stbytes, ',');     // TnBPSrcIP
+    getline(ss, _, ',');           // TnBPSrcIP
     getline(ss, _, ',');           // TnBPDstIP
-    getline(ss, _, ',');           // TnP_PsrcIP
-    getline(ss, _, ',');           // TnP_PDstIP
+    getline(ss, sstpackets, ',');  // TnP_PsrcIP
+    getline(ss, sdtpackets, ',');  // TnP_PDstIP
     getline(ss, _, ',');           // TnP_PerProto
     getline(ss, _, ',');           // TnP_Per_Dport
     getline(ss, _, ',');           // AR_P_Proto_P_SrcIP
@@ -194,21 +196,28 @@ flow *process_csv_line(string line)
 
     stime = stold(sstime);
     ltime = stold(sltime);
-    tbytes = stoll(stbytes);
+    stpackets = stoll(sstpackets);
+    dtpackets = stoll(sdtpackets);
     attack = true ? sattack == "1" : false;
 
     /* TODO: specify appropriate filters */
-    if (attack && category == "DDoS" && subcategory == "TCP") // if the traffic is a TCP DDoS
-    // if (!(attack) && proto == "tcp") // if the traffic is clean tcp traffic
+    if (attack && category == "DDoS" && subcategory == "UDP") // if the traffic is a TCP DDoS
+    // if (!(attack) && proto == "3") // if the traffic is clean tcp traffic
     {
         newFlow->saddr = saddr;
+        newFlow->proto = proto;
         newFlow->stime = stime;
         newFlow->ltime = ltime;
-        newFlow->tbytes = tbytes;
+        newFlow->stpackets = stpackets;
+        newFlow->dtpackets = dtpackets;
 
         return newFlow;
     }
-    else return nullptr;  
+    else 
+    {
+        delete newFlow;
+        return nullptr;
+    }  
 }
 
 /*******************************************************************************
@@ -303,19 +312,19 @@ void processFlow(string &row, vector<flow *> &frame, size_t index,
 {
     if (frame[index]->stime >= min_stime && frame[index]->ltime < max_ltime)
     {
-        row = frame[index]->saddr;
+        row = frame[index]->saddr + ',' + frame[index]->proto;
         row = row + ',' + to_string(frame[index]->stime) + ',' +
               to_string(frame[index]->ltime) + ',' +
-              to_string(frame[index]->tbytes) + 
+              to_string(frame[index]->stpackets) + ',' + to_string(frame[index]->dtpackets) +
               '\n';
     }
     else if (frame[index]->stime >= min_stime && frame[index]->stime < max_ltime && frame[index]->ltime >= max_ltime)
     {
         splitFlow(frame, index, max_ltime);
-        row = frame[index]->saddr;
+        row = frame[index]->saddr + ',' + frame[index]->proto;
         row = row + ',' + to_string(frame[index]->stime) + ',' +
               to_string(frame[index]->ltime) + ',' +
-              to_string(frame[index]->tbytes) + '\n';
+              to_string(frame[index]->stpackets) + ',' + to_string(frame[index]->dtpackets) + '\n';
     }
 
     return;
@@ -345,12 +354,15 @@ void splitFlow(vector<flow *> &frame, size_t index, const long double &max_ltime
 
     flow *newFlow = new flow;
     newFlow->saddr = frame[index]->saddr; 
+    newFlow->proto = frame[index]->proto;
     newFlow->stime = max_ltime;
     newFlow->ltime = frame[index]->ltime; 
-    newFlow->tbytes = frame[index]->tbytes * (1 - percent_in_frame);
+    newFlow->stpackets = frame[index]->stpackets * (1 - percent_in_frame);
+    newFlow->dtpackets = frame[index]->dtpackets * (1 - percent_in_frame);
 
     frame[index]->ltime = max_ltime;
-    frame[index]->tbytes = frame[index]->tbytes * percent_in_frame; 
+    frame[index]->stpackets = frame[index]->stpackets * percent_in_frame; 
+    frame[index]->dtpackets = frame[index]->dtpackets * percent_in_frame;
 
     frame.insert(insert_loc, newFlow);
 
@@ -394,13 +406,14 @@ void writeFrame(vector<string> &subFrame)
     num_calls++; 
 
     /* TODO: edit this line to change what directory the system writes to */
-    string fname = "heat_maps/transformed_data/ddos_tcp/Frame" + to_string(num_calls) + ".csv"; 
+    string fname = "/home/SGF.EDUBEAR.NET/eam96/data/time_series_data/ddos_udp/Frame" + to_string(num_calls) + ".csv"; 
 
     ofstream fout = ofstream(fname, std::ofstream::out); 
-    fout << "saddr,stime,ltime,tbytes\n"; 
+    fout << "saddr,proto,stime,ltime,stpackets,dtpackets\n"; 
     for (string str : subFrame) 
     {
         fout << str; 
     }
+    fout.close();
     return;
 }
